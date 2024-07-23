@@ -1,0 +1,158 @@
+#cloud-config
+
+# Configuration for Ubuntu 24.04 LTS running on WSL
+# %USERPROFILE%\.cloud-init\Ubuntu-24.04.user-data
+
+# CMD : wsl.exe --update
+# CMD : wsl.exe --install Ubuntu-24.04
+# CMD : wsl.exe --distribution Ubuntu-24.04
+# Ubuntu-24.04 : cd && exit
+# CMD : wsl.exe --shutdown
+
+locale: en_US.UTF-8
+timezone: America/Chicago
+
+groups:
+- docker
+
+users:
+- name: user
+  gecos: Default instance user
+  no-user-group: false
+  plain_text_passwd: 'password'
+  groups: [adm, dialout, cdrom, floppy, sudo, audio, dip, video, plugdev, netdev, docker]
+  shell: /bin/bash
+  sudo: ALL=(ALL:ALL) NOPASSWD:ALL
+- name: dockremap
+  gecos: Docker rootless remap
+  system: true
+  no-user-group: false
+  groups: [docker]
+  shell: /bin/bash
+
+write_files:
+
+- path: /etc/wsl.conf
+  append: true
+  content: |
+    [user]
+    default=user
+    [automount]
+    enabled=true
+    options="case=dir,umask=077,fmask=077,dmask=077"
+
+- path: /etc/profile.d/wsl-profile
+  append: false
+  content: |
+    if [[ "$USER" != "root" && -n "$USERPROFILE" && -d "$USERPROFILE" ]] ; then
+      mkdir -p "$USERPROFILE/.config" && ln -sf "$USERPROFILE/.config" $HOME/.config && rm -f $HOME/.config/.config
+      mkdir -p "$USERPROFILE/.gnupg" && ln -sf "$USERPROFILE/.gnupg" $HOME/.gnupg && rm -f $HOME/.gnupg/.gnupg
+      mkdir -p "$USERPROFILE/.local" && ln -sf "$USERPROFILE/.local" $HOME/.local && rm -f $HOME/.local/.local
+      [[ -d $HOME/.ssh && ! -h $HOME/.ssh ]] && rm -fr $HOME/.ssh
+      mkdir -p "$USERPROFILE/.ssh" && ln -sf "$USERPROFILE/.ssh" $HOME/.ssh && rm -f $HOME/.ssh/.ssh
+      touch "$USERPROFILE/.netrc" && ln -sf "$USERPROFILE/.netrc" $HOME/.netrc
+      touch "$USERPROFILE/.s3cfg" && ln -sf "$USERPROFILE/.s3cfg" $HOME/.s3cfg
+      touch "$USERPROFILE/.smbcredentials" && ln -sf "$USERPROFILE/.smbcredentials" $HOME/.smbcredentials
+    fi
+
+- path: /etc/fstab
+  append: true
+  defer: true
+  content: |
+    # drvfs mount to a drive letter
+    # M: /mnt/m drvfs rw,noatime,uid=user,gid=user,case=dir,umask=077,fmask=077,dmask=077 0 0
+    # bind mount to windows_user home
+    # /mnt/c/Users/windows_user /mnt/home none bind,default 0 0
+    # cifs requires /home/user/.smbcredentials
+    # //192.168.1.10/shared/artifacts /mnt/artifacts cifs vers=3,user,rw,credentials=/home/user/.smbcredentials,iocharset=utf8,uid=user,forceuid,gid=user,forcegid,noauto,x-mount.mkdir,x-systemd.automount 0 0
+    # //192.168.1.10/shared/downloads /mnt/downloads cifs vers=3,user,rw,credentials=/home/user/.smbcredentials,iocharset=utf8,uid=user,forceuid,gid=user,forcegid,noauto,x-mount.mkdir,x-systemd.automount 0 0
+    # //192.168.1.10/shared/sstate-cache /mnt/sstate-cache cifs vers=3,user,rw,credentials=/home/user/.smbcredentials,iocharset=utf8,uid=user,forceuid,gid=user,forcegid,noauto,x-mount.mkdir,x-systemd.automount 0 0
+
+- path: /etc/sysctl.d/wsl-settings.conf
+  append: false
+  content: |
+    fs.inotify.max_user_watches=524288
+    net.ipv4.conf.all.forwarding=1
+
+- path: /etc/subgid
+  append: true
+  content: |
+    dockremap:4294936224:65536
+
+- path: /etc/subuid
+  append: true
+  content: |
+    dockremap:4294936224:65536
+
+package_reboot_if_required: true
+package_update: true
+package_upgrade: true
+packages:
+- build-essential
+- chrpath
+- cpio
+- debianutils
+- diffstat
+- file
+- gawk
+- gcc
+- git
+- iputils-ping
+- libacl1
+- liblz4-tool
+- locales
+- python3
+- python3-git
+- python3-jinja2
+- python3-pexpect
+- python3-pip
+- python3-subunit
+- socat
+- texinfo
+- unzip
+- wget
+- xz-utils
+- zstd
+- apt-transport-https
+- ca-certificates
+- cifs-utils
+- curl
+- file
+- git-lfs
+- gnupg-agent
+- jq
+- libacl1
+- liblz4-tool
+- libxml2-utils
+- repo
+- s3cmd
+- software-properties-common
+- time
+- uidmap
+
+runcmd:
+- |
+  [[ -z "$GNUPGHOME" ]] && setx.exe GNUPGHOME '%USERPROFILE%\.gnupg'
+  [[ -z "$USERNAME" || -z "$USERPROFILE" ]] && setx.exe WSLENV 'USERNAME:USERPROFILE/p'
+- |
+  mkdir -p -m 1777 /srv/repo
+  # mkdir -p -m 755 /mnt/m
+  # mkdir -p -m 755 /mnt/home
+  # mkdir -p -m 755 /mnt/artifacts
+  # mkdir -p -m 755 /mnt/downloads
+  # mkdir -p -m 755 /mnt/sstate-cache
+- |
+  curl --fsSL https://storage.googleapis.com/git-repo-downloads/repo >/usr/local/bin/repo
+  chmod 755 /usr/local/bin/repo
+- |
+  curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | apt-key add -
+  apt-add-repository "deb [arch=amd64] https://cli.github.com/packages stable main"
+  apt-add-repository "deb [arch=arm64] https://cli.github.com/packages stable main"
+  apt-get update -y
+  apt-get install -y gh
+- |
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+  add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  add-apt-repository "deb [arch=arm64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io
